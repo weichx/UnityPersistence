@@ -1,4 +1,6 @@
-﻿namespace Weichx.Persistence {
+﻿using System.Collections;
+
+namespace Weichx.Persistence {
 
     using System;
     using System.Collections.Generic;
@@ -15,14 +17,18 @@
         public readonly Type genericBase;
         public readonly Type[] genericArguments;
         public readonly FieldInfo[] fields;
-
+        public readonly bool IsArrayLike;
+        public readonly bool IsList;
+        
         public TypeDefinition(Type type) {
             this.type = type;
             this.typeValue = GetTypeValue(type);
             this.typeName = GetTypeName(typeValue, type.FullName);
             genericBase = type.IsGenericType ? type.GetGenericTypeDefinition() : null;
             genericArguments = type.IsGenericType ? type.GetGenericArguments() : null;
-            fields = GetFields(type);
+            fields = GetFields(this);
+            IsList = !type.IsArray && typeof(IList).IsAssignableFrom(type);
+            IsArrayLike = IsArray || typeof(IList).IsAssignableFrom(type);
         }
 
         public bool HasFields => !IsPrimitiveLike && !IsType;
@@ -51,9 +57,7 @@
 
         public bool IsArray => (typeValue & TypeValue.Array) != 0;
 
-        public bool IsArrayLike => (typeValue & TypeValue.ArrayLike) != 0;
-
-        public bool IsReferenceType => type.IsClass && type != typeof(string);
+        public bool IsReferenceType => type.IsClass && type != typeof(Type) && type != typeof(string);
 
         public bool IsKnownType {
             // not sure that this should include collections/generics
@@ -75,6 +79,7 @@
 
         }
 
+        private static readonly List<FieldInfo> s_fieldInfoList = new List<FieldInfo>(16);
         private static readonly Dictionary<Type, TypeDefinition> typeDefinitions = new Dictionary<Type, TypeDefinition>();
 
         public static TypeDefinition Get(Type type) {
@@ -92,17 +97,80 @@
 
         private static List<FieldInfo> fieldInfoContainer = new List<FieldInfo>(16);
 
-        private static FieldInfo[] GetFields(Type type) {
+        private static FieldInfo[] GetFields(TypeDefinition typeDefinition) {
+            if (typeDefinition.IsType || typeDefinition.IsPrimitiveLike || typeDefinition.IsArrayLike) {
+                return new FieldInfo[0];
+            }
             fieldInfoContainer.Clear();
-            FieldInfo[] fieldInfos = type.GetFields(FieldBindFlags);
+            IReadOnlyList<FieldInfo> fieldInfos = GetFieldsIncludingBaseClasses(typeDefinition.type);
 
-            for (int i = 0; i < fieldInfos.Length; i++) {
+            for (int i = 0; i < fieldInfos.Count; i++) {
                 FieldInfo fieldInfo = fieldInfos[i];
-                if (!fieldInfo.IsNotSerialized) {
+                if (ShouldReflectField(fieldInfo)) {
                     fieldInfoContainer.Add(fieldInfo);
                 }
             }
             return fieldInfoContainer.ToArray();
+        }
+
+        private static bool ShouldReflectField(FieldInfo fi) {
+//            return !fi.IsNotSerialized;
+            // if we include this line we need to make custom adapters for collection types
+            return !fi.IsNotSerialized && (fi.IsPublic || fi.GetCustomAttributes(typeof(SerializeField), false).Length != 0);
+        }
+
+        /// <summary>
+        ///   Returns all the fields of a type, working around the fact that reflection
+        ///   does not return private fields in any other part of the hierarchy than
+        ///   the exact class GetFields() is called on.
+        /// </summary>
+        /// <param name="type">Type whose fields will be returned</param>
+        /// <param name="bindingFlags">Binding flags to use when querying the fields</param>
+        /// <returns>All of the type's fields, including its base types</returns>
+        private static IReadOnlyList<FieldInfo> GetFieldsIncludingBaseClasses(Type type, BindingFlags bindingFlags = FieldBindFlags) {
+
+            s_fieldInfoList.Clear();
+
+            if (type.IsValueType) {
+                FieldInfo[] fieldInfos = type.GetFields(bindingFlags);
+                s_fieldInfoList.AddRange(fieldInfos);
+                return s_fieldInfoList;
+            }
+            // If this class doesn't have a base, don't waste any time
+            if (type.BaseType == typeof(object)) {
+                FieldInfo[] fieldInfos = type.GetFields(bindingFlags);
+                s_fieldInfoList.AddRange(fieldInfos);
+                return s_fieldInfoList;
+            }
+
+            // Otherwise, collect all types up to the furthest base class
+            while (type.BaseType != null && type.BaseType != typeof(object)) {
+                type = type.BaseType;
+                FieldInfo[] fieldInfos = type.GetFields(bindingFlags);
+
+                // Look for fields we do not have listed yet and merge them into the main list
+                for (int index = 0; index < fieldInfos.Length; ++index) {
+                    bool found = false;
+
+                    for (int searchIndex = 0; searchIndex < s_fieldInfoList.Count; ++searchIndex) {
+                        bool match =
+                            (s_fieldInfoList[searchIndex].DeclaringType == fieldInfos[index].DeclaringType) &&
+                            (s_fieldInfoList[searchIndex].Name == fieldInfos[index].Name);
+
+                        if (match) {
+                            found = true;
+                            break;
+                        }
+                    }
+
+                    if (!found) {
+                        s_fieldInfoList.Add(fieldInfos[index]);
+                    }
+                }
+            }
+
+            return s_fieldInfoList;
+
         }
 
         public static TypeValue GetTypeValue(Type type) {

@@ -72,6 +72,7 @@ namespace Weichx.Persistence {
                 target.byteValue = 5;
                 target.doubleValue = 4144.0f;
                 Snapshot<TestObjectMultiField> snapshot = new Snapshot<TestObjectMultiField>(target);
+                string[] split = snapshot.Serialize().Split(new[] {Environment.NewLine}, StringSplitOptions.None);
                 Snapshot<TestObjectMultiField> deserialized = Snapshot<TestObjectMultiField>.FromString(snapshot.Serialize());
                 TestObjectMultiField x = deserialized.Deserialize();
                 Assert.AreEqual(x.intVal, 1);
@@ -228,7 +229,7 @@ namespace Weichx.Persistence {
                 public List<int> primtiveList;
 
             }
-            
+
             [Test]
             public void HandleList() {
                 ListPrimitiveTest target = new ListPrimitiveTest();
@@ -247,7 +248,7 @@ namespace Weichx.Persistence {
                 Assert.AreEqual(1, y.primtiveList[1]);
                 Assert.AreEqual(2, y.primtiveList[2]);
             }
-            
+
             class TypeTest {
 
                 public Type typeVal = typeof(string);
@@ -259,7 +260,83 @@ namespace Weichx.Persistence {
                 TypeTest target = new TypeTest();
                 Snapshot<TypeTest> snapshot = new Snapshot<TypeTest>(target);
                 TypeTest x = snapshot.Deserialize();
-                Assert.AreEqual(typeof(string), x.typeVal);
+                string serialized = snapshot.Serialize();
+                string[] split = serialized.Split(new[] {Environment.NewLine}, StringSplitOptions.None);
+                Snapshot<TypeTest> deserialized = Snapshot<TypeTest>.FromString(serialized);
+                TypeTest y = deserialized.Deserialize();
+                Assert.AreEqual(typeof(string), y.typeVal);
+            }
+
+            //todo -- support dictionaries
+            //todo -- support delegates
+//            [Test]
+//            public void HandleDictionary() {
+//                Dictionary<int, string> target = new Dictionary<int, string>();
+//                target[0] = "zero";
+//                target[1] = "one";
+//                target[2] = "two";
+//                Snapshot<Dictionary<int, string>> snapshot = new Snapshot<Dictionary<int, string>>(target);
+//                string serialized = snapshot.Serialize();
+//                Snapshot<Dictionary<int, string>> deserialized = Snapshot<Dictionary<int, string>>.FromString(serialized);
+//                Dictionary<int, string> y = deserialized.Deserialize();
+//                Assert.AreEqual(y[0], "zero");
+//                Assert.AreEqual(y[1], "one");
+//                Assert.AreEqual(y[2], "two");
+//            }
+
+            class StringTest {
+
+                public string strVal;
+
+            }
+            
+            [Test]
+            public void HandlesLongStringsWithBreaks() {
+                StringTest target = new StringTest();
+                string strVal = @"
+
+                    this is 
+    a complicated
+
+    string
+
+
+                ";
+                target.strVal = strVal;
+                Snapshot<StringTest> snapshot = new Snapshot<StringTest>(target);
+                StringTest x = snapshot.Deserialize();
+                Assert.AreEqual(strVal, x.strVal);
+                Snapshot<StringTest> deserialized = Snapshot<StringTest>.FromString(snapshot.Serialize());
+                StringTest y = deserialized.Deserialize();
+                Assert.AreEqual(strVal, y.strVal);
+
+            }
+
+            class PrivateThing {
+
+                private int notMe = 1;
+                public int me = 1;
+
+                public int NotMe {
+                    get { return notMe; }
+                    set { notMe = value; }
+                }
+            }
+
+            [Test]
+            public void SkipsPrivateFields() {
+                PrivateThing target = new PrivateThing();
+                target.NotMe = 100;
+                target.me = 20;
+                Snapshot<PrivateThing> snapshot = new Snapshot<PrivateThing>(target);
+                PrivateThing x = snapshot.Deserialize();
+                Assert.AreEqual(20, x.me);
+                Assert.AreEqual(1, x.NotMe);
+                Snapshot<PrivateThing> deserialized = Snapshot<PrivateThing>.FromString(snapshot.Serialize());
+                PrivateThing y = deserialized.Deserialize();
+                Assert.AreEqual(20, y.me);
+                Assert.AreEqual(1, y.NotMe);
+                
             }
         }
 

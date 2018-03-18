@@ -1,9 +1,9 @@
 ﻿using System;
+using System.Collections;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Reflection;
 using System.Text.RegularExpressions;
-using NUnit.Framework;
-using UnityEngine;
 
 namespace Weichx.Persistence {
 
@@ -15,7 +15,7 @@ namespace Weichx.Persistence {
         private const char TypeChar = '*';
         private const char UnityChar = '!';
         private const char UnknownChar = '?';
-        
+
         private List<Type> typeMap;
         private List<TypeDefinition> typeDefinitionMap;
         private List<string> assemblyMap;
@@ -38,18 +38,16 @@ namespace Weichx.Persistence {
             public readonly object target;
             public readonly TypeDefinition typeDefinition;
             public readonly Array targetAsArray;
-            public readonly int fieldCount;
             public int assignedFields;
-            
-            public TargetInfo(object target, TypeDefinition typeDefinition, int fieldCount) {
+            public IList targetAsList;
+
+            public TargetInfo(object target, TypeDefinition typeDefinition) {
                 this.target = target;
                 this.targetAsArray = target as Array;
+                this.targetAsList = target as IList;
                 this.typeDefinition = typeDefinition;
                 this.assignedFields = 0;
-                this.fieldCount = fieldCount;
             }
-
-            public bool AllFieldsAssigned => assignedFields == fieldCount;
 
         }
 
@@ -108,6 +106,17 @@ namespace Weichx.Persistence {
                 if (type.IsArray) {
                     referenceMap.Add(Array.CreateInstance(type.GetElementType(), reader.ReadTaggedInt('C')));
                 }
+                else if (typeof(IList).IsAssignableFrom(type)) {
+                    IList list = Activator.CreateInstance(type) as IList;
+                    Debug.Assert(list != null, nameof(list) + " != null");
+                    int fieldCount = reader.ReadTaggedInt('C');
+                    Type elementType = type.GetGenericArguments()[0];
+                    object tempVal = GetDefaultForType(elementType);
+                    for (int i = 0; i < fieldCount; i++) {
+                        list.Add(tempVal);
+                    }
+                    referenceMap.Add(list);
+                }
                 else {
                     referenceMap.Add(Activator.CreateInstance(typeMap[typeId]));
                 }
@@ -120,8 +129,11 @@ namespace Weichx.Persistence {
             if (ti.typeDefinition.IsArray) {
                 ti.targetAsArray.SetValue(value, ti.assignedFields);
             }
+            else if (ti.typeDefinition.IsArrayLike) {
+                ti.targetAsList[ti.assignedFields] = value;
+            }
             else {
-                FieldInfo fi = FindFieldInfo(ti.typeDefinition.fields, value.GetType(), name);
+                FieldInfo fi = FindFieldInfo(ti.typeDefinition.fields, value, name);
                 if (fi != null) {
                     fi.SetValue(ti.target, value);
                 }
@@ -138,20 +150,20 @@ namespace Weichx.Persistence {
                 int typeId = reader.ReadTaggedInt('T');
                 int fieldCount = reader.ReadTaggedInt('C');
                 object reference = referenceMap[refId];
-                TargetInfo targetInfo = new TargetInfo(reference, typeDefinitionMap[typeId], fieldCount);
-                Assert.IsTrue(targetStack.Count == 0);
+                TargetInfo targetInfo = new TargetInfo(reference, typeDefinitionMap[typeId]);
+                Debug.Assert(targetStack.Count == 0);
                 targetStack.Push(targetInfo);
                 ReadFieldLines(fieldCount);
                 targetStack.Pop();
-                Assert.IsTrue(targetStack.Count == 0);
+                Debug.Assert(targetStack.Count == 0);
                 pointer++;
             }
-           
+
         }
 
         private void ReadFieldLines(int count) {
             int read = 0;
-                        
+
             while (read != count) {
                 pointer++;
                 string line = lines[pointer];
@@ -159,13 +171,13 @@ namespace Weichx.Persistence {
                 char lineChar = line[0];
                 if (lineChar == StructChar) {
                     //line = "& @TtypeId name @CfieldCount"
-                    Assert.IsTrue(targetStack.Count > 0);
+                    Debug.Assert(targetStack.Count > 0);
                     int typeId = reader.ReadTaggedInt('T');
                     string name = reader.ReadString();
                     int fieldCount = reader.ReadTaggedInt('C');
                     Type type = typeMap[typeId];
                     object structValue = Activator.CreateInstance(type);
-                    TargetInfo targetInfo = new TargetInfo(structValue, typeDefinitionMap[typeId], fieldCount);
+                    TargetInfo targetInfo = new TargetInfo(structValue, typeDefinitionMap[typeId]);
                     targetStack.Push(targetInfo);
                     ReadFieldLines(fieldCount);
                     targetStack.Pop();
@@ -175,7 +187,7 @@ namespace Weichx.Persistence {
                     //line = "% @RrefId name"
                     int fieldRefId = reader.ReadTaggedInt('R');
                     string name = reader.ReadString();
-                    AssignValue(name, referenceMap[fieldRefId]);
+                    AssignValue(name, fieldRefId == -1 ? null : referenceMap[fieldRefId]);
                 }
                 else if (lineChar == PrimitiveChar) {
                     // line = "- @TtypeId name value"
@@ -183,7 +195,7 @@ namespace Weichx.Persistence {
                     string name = reader.ReadString();
                     string value = reader.ReadLine();
                     TypeDefinition td = typeDefinitionMap[typeId];
-                    AssignValue(name, DeserializePrimitive(td.typeValue, value));
+                    AssignValue(name, DeserializePrimitive(td, value));
                 }
                 else if (lineChar == TypeChar) {
                     int typeId = reader.ReadTaggedInt('T');
@@ -196,26 +208,36 @@ namespace Weichx.Persistence {
                     string name = reader.ReadString();
                     AssignValue(name, null);
                 }
-                else if (lineChar == UnknownChar) {
-                    
-                }
+                else if (lineChar == UnknownChar) { }
                 read++;
             }
-            
+
         }
-       
-        private static FieldInfo FindFieldInfo(FieldInfo[] fieldInfos, Type type, string name) {
-            for (int j = 0; j < fieldInfos.Length; j++) {
-                FieldInfo fi = fieldInfos[j];
-                if (fi.Name == name && fi.FieldType.IsAssignableFrom(type)) {
-                    return fi;
+
+        private static FieldInfo FindFieldInfo(FieldInfo[] fieldInfos, object value, string name) {
+            if (value != null) {
+                Type type = value.GetType();
+                for (int j = 0; j < fieldInfos.Length; j++) {
+                    FieldInfo fi = fieldInfos[j];
+                    if (fi.Name == name && fi.FieldType.IsAssignableFrom(type)) {
+                        return fi;
+                    }
                 }
             }
+            else {
+                for (int j = 0; j < fieldInfos.Length; j++) {
+                    FieldInfo fi = fieldInfos[j];
+                    if (fi.Name == name) {
+                        return fi;
+                    }
+                }
+            }
+
             return null;
         }
 
-        private static object DeserializePrimitive(TypeValue typeValue, string value) {
-            switch (typeValue) {
+        private static object DeserializePrimitive(TypeDefinition typeDefinition, string value) {
+            switch (typeDefinition.typeValue) {
                 case TypeValue.Double:
                     return double.Parse(value);
                 case TypeValue.Decimal:
@@ -223,7 +245,7 @@ namespace Weichx.Persistence {
                 case TypeValue.Float:
                     return float.Parse(value);
                 case TypeValue.Enum:
-                    return int.Parse(value);
+                    return Enum.Parse(typeDefinition.type, value);
                 case TypeValue.String:
                     return Regex.Unescape(value);
                 case TypeValue.Boolean:
@@ -246,19 +268,13 @@ namespace Weichx.Persistence {
                     return ulong.Parse(value);
                 case TypeValue.Char:
                     return char.Parse(value);
-//                case TypeValue.Vector2:
-//                    return new Vector2(reader.ReadFloat(), reader.ReadFloat());
-//                case TypeValue.Vector3:
-//                    return new Vector3(reader.ReadFloat(), reader.ReadFloat(), reader.ReadFloat());
-//                case TypeValue.Vector4:
-//                    return new Vector4(reader.ReadFloat(), reader.ReadFloat(), reader.ReadFloat(), reader.ReadFloat());
-//                case TypeValue.Quaternion:
-//                    return new Quaternion(reader.ReadFloat(), reader.ReadFloat(), reader.ReadFloat(), reader.ReadFloat());
-//                case TypeValue.Color:
-//                    return new Color(reader.ReadFloat(), reader.ReadFloat(), reader.ReadFloat(), reader.ReadFloat());
                 default:
                     throw new ArgumentOutOfRangeException();
             }
+        }
+
+        private static object GetDefaultForType(Type type) {
+            return type.IsValueType ? Activator.CreateInstance(type) : null;
         }
 
     }
