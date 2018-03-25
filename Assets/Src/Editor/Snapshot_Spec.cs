@@ -267,22 +267,110 @@ namespace Weichx.Persistence {
                 Assert.AreEqual(typeof(string), y.typeVal);
             }
 
-            //todo -- support dictionaries
+
+            struct Thing {
+
+                public float x;
+                public float y;
+
+            }
+            
+            class TypeToGoMissing {
+
+                public float x;
+                public Thing thing;
+
+            }
+
+            class TypeMissingInObject {
+
+                public TypeToGoMissing missing;
+                public Thing here;
+
+            }
+
+            [Test]
+            public void HandleTypeMissingInObject() {
+                TypeMissingInObject target = new TypeMissingInObject();
+                target.missing = new TypeToGoMissing();
+                target.missing.x = 100;
+                target.here.x = 100;
+                target.here.y = 200;
+                Snapshot<TypeMissingInObject> snapshot = new Snapshot<TypeMissingInObject>(target);
+                string serialized = snapshot.Serialize();
+                serialized = serialized.Replace("TypeToGoMissing", "TypeNowMissing");
+                TypeMissingInObject y = Snapshot<TypeMissingInObject>.Deserialize(serialized);
+                Assert.IsNull(y.missing);
+                Assert.AreEqual(y.here.x, 100);
+                Assert.AreEqual(y.here.y, 200);
+            }
+
+            class TypeMissingInList {
+
+                public List<object> list;
+
+            }
+            
+            [Test]
+            public void HandleTypeMissingInList() {
+                TypeMissingInList target = new TypeMissingInList();
+                target.list = new List<object>();
+                target.list.Add(200f);
+                target.list.Add(new TypeToGoMissing());
+                target.list.Add(new TypeToGoMissing());
+                target.list.Add(100f);
+                Snapshot<TypeMissingInList> snapshot = new Snapshot<TypeMissingInList>(target);
+
+                string serialized = snapshot.Serialize();
+                serialized = serialized.Replace("TypeToGoMissing", "TypeNowMissing");
+                TypeMissingInList y = Snapshot<TypeMissingInList>.Deserialize(serialized);
+                Assert.IsNotNull(y.list);
+                Assert.AreEqual(2, y.list.Count);
+                Assert.AreEqual(200, y.list[0]);
+                Assert.AreEqual(100, y.list[1]);
+            }
+
+            class TypeMissingInArray {
+
+                public object[] list;
+
+            }
+            
+            [Test]
+            public void HandleTypeMissingInArray() {
+                TypeMissingInArray target = new TypeMissingInArray();
+                target.list = new object[4];
+                target.list[0] = (200f);
+                target.list[1] = (new TypeToGoMissing());
+                target.list[2] = (new TypeToGoMissing());
+                target.list[3] = (100f);
+                Snapshot<TypeMissingInArray> snapshot = new Snapshot<TypeMissingInArray>(target);
+
+                string serialized = snapshot.Serialize();
+                serialized = serialized.Replace("TypeToGoMissing", "TypeNowMissing");
+                TypeMissingInArray y = Snapshot<TypeMissingInArray>.Deserialize(serialized);
+                Assert.IsNotNull(y.list);
+                Assert.AreEqual(2, y.list.Length);
+                Assert.AreEqual(200, y.list[0]);
+                Assert.AreEqual(100, y.list[1]);
+            }
+            
             //todo -- support delegates
-//            [Test]
-//            public void HandleDictionary() {
-//                Dictionary<int, string> target = new Dictionary<int, string>();
-//                target[0] = "zero";
-//                target[1] = "one";
-//                target[2] = "two";
-//                Snapshot<Dictionary<int, string>> snapshot = new Snapshot<Dictionary<int, string>>(target);
-//                string serialized = snapshot.Serialize();
-//                Snapshot<Dictionary<int, string>> deserialized = Snapshot<Dictionary<int, string>>.FromString(serialized);
-//                Dictionary<int, string> y = deserialized.Deserialize();
-//                Assert.AreEqual(y[0], "zero");
-//                Assert.AreEqual(y[1], "one");
-//                Assert.AreEqual(y[2], "two");
-//            }
+
+            [Test]
+            public void HandleDictionary() {
+                Dictionary<int, string> target = new Dictionary<int, string>();
+                target[0] = "zero";
+                target[1] = "one";
+                target[2] = "two";
+                Snapshot<Dictionary<int, string>> snapshot = new Snapshot<Dictionary<int, string>>(target);
+                string serialized = snapshot.Serialize();
+                Snapshot<Dictionary<int, string>> deserialized = Snapshot<Dictionary<int, string>>.FromString(serialized);
+                Dictionary<int, string> y = deserialized.Deserialize();
+                Assert.AreEqual(y[0], "zero");
+                Assert.AreEqual(y[1], "one");
+                Assert.AreEqual(y[2], "two");
+            }
 
             class StringTest {
 
